@@ -47,7 +47,6 @@ def load_train():
     image=image,
     gpu="A100",
     volumes={VOLUME_PATH: volume, HF_HOME: hf_cache},
-    memory=32768,
     timeout=3 * 3600,
 )
 def train_fold(model_name: str, fold: int, context_size: int, num_estimators: int):

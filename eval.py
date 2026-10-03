@@ -75,7 +75,7 @@ def add_target_encoding(X, y, features, train_idx, valid_idx):
     return np.column_stack([X, *encoded]), features + [f"{c}_te" for c in TE_COLS]
 
 
-@app.function(image=image, volumes={VOLUME_PATH: volume}, cpu=8, memory=8192, timeout=3600)
+@app.function(image=image, volumes={VOLUME_PATH: volume}, cpu=8, timeout=3600)
 def train_fold(fold: int):
     import lightgbm as lgb
     from sklearn.metrics import roc_auc_score

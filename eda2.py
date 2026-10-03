@@ -85,7 +85,7 @@ def add_target_encoding(df, feats, tr, va, X, y, cols, alpha=20):
     return np.column_stack([X] + new), feats
 
 
-@app.function(image=image, volumes={VOLUME_PATH: volume}, memory=8192, timeout=3600)
+@app.function(image=image, volumes={VOLUME_PATH: volume}, timeout=3600)
 def data_checks():
     import polars as pl
 
@@ -163,7 +163,7 @@ def data_checks():
     print(p.group_by("Inflight wifi service").agg(pl.len().alias("n"), pl.col(TARGET).mean().alias("rate")).sort("Inflight wifi service"))
 
 
-@app.function(image=image, volumes={VOLUME_PATH: volume}, cpu=8, memory=8192, timeout=3600)
+@app.function(image=image, volumes={VOLUME_PATH: volume}, cpu=8, timeout=3600)
 def fold_experiment(kind: str, fold: int):
     import lightgbm as lgb
     from sklearn.metrics import roc_auc_score
@@ -196,7 +196,7 @@ def fold_experiment(kind: str, fold: int):
             "valid_idx": va, "preds": preds}
 
 
-@app.function(image=image, volumes={VOLUME_PATH: volume}, memory=8192, timeout=3 * 3600)
+@app.function(image=image, volumes={VOLUME_PATH: volume}, timeout=3 * 3600)
 def experiments(kinds: list[str]):
     import numpy as np
     import polars as pl
