@@ -19,6 +19,8 @@ uv run modal run eval_catboost.py          # CatBoost 5-fold CV, L4 GPU (variant
 uv run modal run eval_catboost.py --variants allcat
 uv run modal run eval_sdm.py               # tabular foundation models (SDM), A100 GPU
 uv run modal run eval_sdm.py --models tabiclv2 --folds 0 --context-sizes 10000,50000 --num-estimators 4,8
+uv run modal run blend.py                  # rank-blend every OOF file in /data/oof-s6e10/
+uv run modal run blend.py --names catboost_allcat,lightgbm_te
 ```
 
 The `eval_sdm.py` CLI options are comma-separated lists. They form a grid of `model × context_size × num_estimators`, and each config runs on the given folds.
@@ -28,7 +30,7 @@ There are no tests, linter or build step.
 ## Architecture and conventions
 
 - **Data:** the Modal volume `kaggle` is mounted at `/data`. Competition files (`train.csv`, `test.csv`) are in `/data/playground-series-s6e10/`. The Modal volume `hf-cache` is mounted at `/hf-cache` as `HF_HOME` for model weights. Call `hf_cache.commit()` after downloading weights so they persist.
-- **OOF predictions** for ensembling go in `/data/oof-s6e10/<model>_<variant>.npy`, in `train.csv` row order. `eval_catboost.py` writes them; call `volume.commit()` after writing.
+- **OOF predictions** for ensembling go in `/data/oof-s6e10/<model>_<variant>.npy`, in `train.csv` row order. `eval.py` (`lightgbm_te`) and `eval_catboost.py` (`catboost_<variant>`) write them; call `volume.commit()` after writing. `blend.py` scores single models, pairwise weights and greedy ensemble selection on rank-normalized OOFs.
 - **Modal resources:** set `cpu=`, `gpu=` and `timeout=` on `@app.function` as needed, but never `memory=`, since Modal bursts memory when required.
 - **Eval script pattern** (`eval.py`, `eval_catboost.py`, `eval_sdm.py`):
   - `train_fold` is a Modal function that handles one fold.

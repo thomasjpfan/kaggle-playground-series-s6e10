@@ -5,6 +5,8 @@ app = modal.App("kaggle-playground-eval")
 volume = modal.Volume.from_name("kaggle")
 VOLUME_PATH = "/data"
 DATA_DIR = f"{VOLUME_PATH}/playground-series-s6e10"
+OOF_DIR = f"{VOLUME_PATH}/oof-s6e10"
+OOF_NAME = "lightgbm_te"
 
 image = modal.Image.debian_slim().uv_pip_install("polars", "lightgbm", "scikit-learn")
 
@@ -113,8 +115,10 @@ def train_fold(fold: int):
     }
 
 
-@app.function(image=image, timeout=3600)
+@app.function(image=image, volumes={VOLUME_PATH: volume}, timeout=3600)
 def cross_validate():
+    import os
+
     import numpy as np
     from sklearn.metrics import roc_auc_score
 
@@ -122,6 +126,14 @@ def cross_validate():
 
     oof_y = np.concatenate([r["y"] for r in results])
     oof_preds = np.concatenate([r["preds"] for r in results])
+
+    # Saved for ensembling; row order matches train.csv.
+    oof = np.zeros(len(oof_y))
+    for r in results:
+        oof[r["valid_idx"]] = r["preds"]
+    os.makedirs(OOF_DIR, exist_ok=True)
+    np.save(f"{OOF_DIR}/{OOF_NAME}.npy", oof)
+    volume.commit()
 
     importance = {}
     for r in results:
