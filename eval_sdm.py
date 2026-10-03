@@ -5,6 +5,7 @@ app = modal.App("kaggle-playground-eval-sdm")
 volume = modal.Volume.from_name("kaggle")
 VOLUME_PATH = "/data"
 DATA_DIR = f"{VOLUME_PATH}/playground-series-s6e10"
+OOF_DIR = f"{VOLUME_PATH}/oof-s6e10"
 
 hf_cache = modal.Volume.from_name("hf-cache")
 HF_HOME = "/hf-cache"
@@ -119,11 +120,14 @@ def train_fold(model_name: str, fold: int, context_size: int, num_estimators: in
         "peak_gb": peak_gb,
         "preds": preds,
         "y": y[valid_idx],
+        "valid_idx": valid_idx,
     }
 
 
-@app.function(image=image, timeout=6 * 3600)
+@app.function(image=image, volumes={VOLUME_PATH: volume}, timeout=6 * 3600)
 def cross_validate(model_names: list[str], folds: list[int], context_sizes: list[int], num_estimators: list[int]):
+    import os
+
     import numpy as np
     from sklearn.metrics import roc_auc_score
 
@@ -157,6 +161,14 @@ def cross_validate(model_names: list[str], folds: list[int], context_sizes: list
             entry["oof_auc"] = float(
                 roc_auc_score(np.concatenate([r["y"] for r in ok]), np.concatenate([r["preds"] for r in ok]))
             )
+            # Saved for ensembling only when every fold ran; row order matches train.csv.
+            if len(folds) == N_FOLDS:
+                oof = np.zeros(sum(len(r["valid_idx"]) for r in ok))
+                for r in ok:
+                    oof[r["valid_idx"]] = r["preds"]
+                os.makedirs(OOF_DIR, exist_ok=True)
+                np.save(f"{OOF_DIR}/sdm_{m}_c{c}_e{e}.npy", oof)
+                volume.commit()
         summary.append(entry)
     for r in results:
         if not isinstance(r, dict):
