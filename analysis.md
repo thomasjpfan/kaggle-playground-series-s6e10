@@ -93,5 +93,56 @@ Observations:
    - the `Type of Travel × Class` cross
    - `arr - dep` delay
    - treating ratings as categorical (CatBoost)
-3. **Original data:** this competition is generated from the public *Airline Passenger Satisfaction* dataset (about 130k rows). Appending the original data to training, or adding an "is_original" indicator, is a common win in Playground series.
-4. **Ensembling:** with no train/test drift, plain CV is reliable, so ensembling several GBDTs plus a categorical-ratings logistic regression is a reasonable next step.
+3. **Ensembling:** with no train/test drift, plain CV is reliable, so ensembling several GBDTs plus a categorical-ratings logistic regression is a reasonable next step.
+
+## Follow-up EDA and experiments
+
+These were run with `eda2.py`:
+- `uv run modal run eda2.py` runs the data checks and the default feature sets.
+- `--no-checks --kinds base,te_fd` runs only the chosen feature sets.
+
+Every number below is LightGBM out-of-fold (OOF) AUC on the same 5 folds as `eval.py`.
+
+### Feature-set results
+
+| Feature set | OOF AUC | Δ vs base |
+|---|---|---|
+| base (raw features, native categoricals) | 0.95883 | — |
+| + `n_zeros`, `n_fives`, `n_high`, rating mean and min, travel×class, `arr - dep` | 0.95869 | −0.0001 |
+| + the same, with ratings as categoricals | 0.95868 | −0.0002 |
+| + count encoding of `Age` and `Flight Distance` | 0.95952 | +0.0007 |
+| + count encoding of all 4 numeric columns | 0.95950 | +0.0007 |
+| + counts, with `Age` as a categorical | 0.95898 | +0.0002 |
+| **+ counts + in-fold target encoding of `Flight Distance`** | **0.96022** | **+0.0014** |
+| + target encoding of all numeric columns | 0.96013 | +0.0013 |
+| + target encoding of numeric columns and of `FD×Class`, `FD×Travel`, `Age×Customer Type` | 0.96012 | +0.0013 |
+
+The best variant is now built into `eval.py`, which scores 0.96025 OOF.
+
+- **The engineered features from the first EDA pass don't help.** That includes the zero counts, rating aggregates and the travel × class cross. Trees already find these patterns. Drop this line of work for GBDTs.
+- **Exact `Flight Distance` values carry signal beyond the smooth trend.** For values with at least 30 rows, each value's satisfied rate differs from a rolling mean over its 21 neighbours about 19× more than binomial noise would explain. The likely cause is that the generator reuses distances from specific routes in the original data. Count and target encoding capture this. Target-encoding the other numeric columns adds nothing.
+
+### Data checks
+
+- **Duplicates:** there are no exact feature duplicates within train, and no test row matches a train row exactly.
+- **Value coverage:** `Age` has 75 unique values and `Flight Distance` has 3,474. Only 61 test rows have a `Flight Distance` value not seen in train.
+- **Label noise is the ceiling.** The OOF predictions are well calibrated decile by decile. Even so, 3.7% of rows are confidently wrong (|pred − y| > 0.9). An example is Business travel in Business class with `Online boarding = 5` labeled unsatisfied. The original dataset reaches about 0.99 AUC, but here gains are likely to come in steps of about 0.001.
+
+### Where the model is weak (OOF AUC within segment)
+
+| Segment | Rows | AUC within segment |
+|---|---|---|
+| Business travel | 497k | 0.955 |
+| Personal travel | 202k | **0.828** |
+| Disloyal customers | 123k | 0.923 |
+| Rows with `n_zeros = 4` | 2.9k | 0.54 |
+
+- **Personal travel:** only wifi (r = 0.24), online booking (0.22) and online boarding (0.16) matter. The comfort ratings have near-zero correlation in this segment. Wifi alone splits it: ratings of 1–3 are about 4% satisfied, 4 is 24%, and 0 or 5 is 79–91%.
+- **`Customer Type` × `Age`:** loyal 41–60 year-olds are 62% satisfied. Disloyal customers are 14–28% satisfied in every age band.
+
+### Next ideas
+
+The competition uses only its own data; the original dataset is not used.
+
+1. **CatBoost:** treat all ratings and numeric columns as categoricals; its ordered target encoding fits the finding above.
+2. **Ensembling:** rank-average models that differ genuinely, such as CatBoost, the SDM models and LightGBM. Rank-averaging LightGBM feature-set variants gave almost nothing (0.96023).

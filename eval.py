@@ -12,6 +12,10 @@ TARGET = "satisfaction"
 CATEGORICAL = ["Gender", "Customer Type", "Type of Travel", "Class"]
 N_FOLDS = 5
 SEED = 42
+COUNT_COLS = ["Age", "Flight Distance"]
+# Exact Flight Distance values carry signal beyond a smooth trend (see analysis.md).
+TE_COLS = ["Flight Distance"]
+TE_ALPHA = 20
 
 PARAMS = {
     "objective": "binary",
@@ -35,10 +39,40 @@ def load_train():
     train = train.with_columns(
         pl.col(c).cast(pl.Categorical).to_physical().cast(pl.Int32) for c in CATEGORICAL
     )
+    train = train.with_columns(pl.len().over(c).alias(f"{c}_count") for c in COUNT_COLS)
     features = [c for c in train.columns if c not in ("id", TARGET)]
     X = train.select(features).to_numpy().astype("float32")
     y = train[TARGET].cast(pl.Int8).to_numpy()
     return X, y, features
+
+
+def target_encode(key, y, fit_idx, apply_idx, prior):
+    import polars as pl
+
+    stats = (
+        pl.DataFrame({"k": key[fit_idx], "y": y[fit_idx]})
+        .group_by("k")
+        .agg(pl.col("y").sum().alias("s"), pl.len().alias("n"))
+    )
+    a = pl.DataFrame({"k": key[apply_idx]}).join(stats, on="k", how="left").fill_null(0)
+    return ((a["s"] + TE_ALPHA * prior) / (a["n"] + TE_ALPHA)).to_numpy()
+
+
+def add_target_encoding(X, y, features, train_idx, valid_idx):
+    """Smoothed target encoding: inner K-fold OOF on the training fold, the full training fold for validation."""
+    import numpy as np
+    from sklearn.model_selection import KFold
+
+    prior = y[train_idx].mean()
+    encoded = []
+    for c in TE_COLS:
+        key = X[:, features.index(c)]
+        enc = np.empty(len(y), dtype="float32")
+        for inner_fit, inner_apply in KFold(N_FOLDS, shuffle=True, random_state=SEED).split(train_idx):
+            enc[train_idx[inner_apply]] = target_encode(key, y, train_idx[inner_fit], train_idx[inner_apply], prior)
+        enc[valid_idx] = target_encode(key, y, train_idx, valid_idx, prior)
+        encoded.append(enc)
+    return np.column_stack([X, *encoded]), features + [f"{c}_te" for c in TE_COLS]
 
 
 @app.function(image=image, volumes={VOLUME_PATH: volume}, cpu=8, memory=8192, timeout=3600)
@@ -50,6 +84,7 @@ def train_fold(fold: int):
     X, y, features = load_train()
     skf = StratifiedKFold(n_splits=N_FOLDS, shuffle=True, random_state=SEED)
     train_idx, valid_idx = list(skf.split(X, y))[fold]
+    X, features = add_target_encoding(X, y, features, train_idx, valid_idx)
 
     cat_idx = [features.index(c) for c in CATEGORICAL]
     dtrain = lgb.Dataset(X[train_idx], y[train_idx], feature_name=features, categorical_feature=cat_idx)

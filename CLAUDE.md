@@ -12,8 +12,9 @@ All computation runs remotely on [Modal](https://modal.com). Nothing reads data 
 
 ```bash
 uv run modal run eda.py                    # EDA (local_entrypoint -> eda)
+uv run modal run eda2.py --no-checks --kinds base,te_fd   # feature-set experiments + OOF error analysis
 uv run modal run eda.py::list_files        # list files on the data volume
-uv run modal run eval.py                   # LightGBM 5-fold CV, CPU
+uv run modal run eval.py                   # LightGBM 5-fold CV, CPU (count + in-fold target encoding)
 uv run modal run eval_sdm.py               # tabular foundation models (SDM), A100 GPU
 uv run modal run eval_sdm.py --models tabiclv2 --folds 0 --context-sizes 10000,50000 --num-estimators 4,8
 ```
