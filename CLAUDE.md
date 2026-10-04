@@ -20,6 +20,8 @@ uv run modal run eval_catboost.py --variants allcat
 uv run modal run eval_sdm.py               # tabular foundation models (SDM), A100 GPU
 uv run modal run eval_sdm.py --models tabiclv2 --folds 0 --context-sizes 10000,50000 --num-estimators 4,8
 uv run modal run blend.py                  # rank-blend every OOF file in /data/oof-s6e10/
+uv run modal run tune.py --model lightgbm  # Optuna on fold 0 (parallel batches), then 5-fold confirm of top configs
+uv run modal run tune.py --model catboost --n-trials 60 --batch-size 12 --confirm-top 2
 uv run modal run blend.py --names catboost_allcat,lightgbm_te
 ```
 
@@ -39,5 +41,6 @@ There are no tests, linter or build step.
   - New model experiments should follow this pattern, with each script defining its own `modal.App` name.
 - **Fold consistency:** every eval uses `StratifiedKFold(n_splits=5, shuffle=True, random_state=42)` on the full train set. This keeps OOF predictions and AUCs comparable across scripts. Keep these settings in any new eval.
 - `eval_sdm.py` uses NVIDIA `structured-data-models` (`sdm`), pinned to a git commit, on Python 3.12 with cudf. It samples `CONTEXT_SIZE` in-context rows per estimator from the training fold, then predicts the validation fold in batches. When a fold runs out of GPU memory it returns `auc=None` instead of failing the whole run.
+- `tune.py` imports the feature code from `eval.py` and `eval_catboost.py` (shipped with `add_local_python_source`), so tuned models use the same features. Trial logs go to `/data/tune-s6e10/<model>.json`; confirmed configs save OOFs as `<model>_tuned<rank>`. Fold 0 is the tuning fold, so compare configs on folds 1–4.
 - `eval_catboost.py` variant `allcat` adds string-typed categorical copies of every rating, `Age` and `Flight Distance`, alongside the numeric originals.
 - Polars is the dataframe library. The exception is that CatBoost `Pool`s are built from `.to_pandas()`.

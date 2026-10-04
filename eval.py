@@ -19,15 +19,20 @@ COUNT_COLS = ["Age", "Flight Distance"]
 TE_COLS = ["Flight Distance"]
 TE_ALPHA = 20
 
+# Tuned with tune.py (lightgbm_tuned0). max_bin=4095 keeps exact Flight Distance values apart.
 PARAMS = {
     "objective": "binary",
     "metric": "auc",
     "learning_rate": 0.05,
-    "num_leaves": 63,
+    "max_bin": 4095,
+    "num_leaves": 100,
     "min_child_samples": 50,
-    "feature_fraction": 0.8,
-    "bagging_fraction": 0.8,
+    "lambda_l2": 15.19,
+    "feature_fraction": 0.509,
+    "bagging_fraction": 0.941,
     "bagging_freq": 1,
+    "cat_smooth": 2.82,
+    "min_sum_hessian_in_leaf": 0.00286,
     "seed": SEED,
     "verbosity": -1,
 }
@@ -89,8 +94,11 @@ def train_fold(fold: int):
     X, features = add_target_encoding(X, y, features, train_idx, valid_idx)
 
     cat_idx = [features.index(c) for c in CATEGORICAL]
-    dtrain = lgb.Dataset(X[train_idx], y[train_idx], feature_name=features, categorical_feature=cat_idx)
-    dvalid = lgb.Dataset(X[valid_idx], y[valid_idx], reference=dtrain)
+    dataset_params = {"max_bin": PARAMS["max_bin"]}
+    dtrain = lgb.Dataset(
+        X[train_idx], y[train_idx], feature_name=features, categorical_feature=cat_idx, params=dataset_params
+    )
+    dvalid = lgb.Dataset(X[valid_idx], y[valid_idx], reference=dtrain, params=dataset_params)
 
     model = lgb.train(
         PARAMS,
