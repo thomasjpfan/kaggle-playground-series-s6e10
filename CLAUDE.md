@@ -23,6 +23,8 @@ uv run modal run blend.py                  # rank-blend every OOF file in /data/
 uv run modal run tune.py --model lightgbm  # Optuna on fold 0 (parallel batches), then 5-fold confirm of top configs
 uv run modal run tune.py --model catboost --n-trials 60 --batch-size 12 --confirm-top 2
 uv run modal run blend.py --names catboost_allcat,lightgbm_te
+uv run modal run blend.py --submit-weights "catboost_allcat:0.6,lightgbm_te:0.4"   # write a submission CSV
+uv run modal volume get kaggle /submissions-s6e10/<file>.csv .                     # download it for Kaggle upload
 ```
 
 The `eval_sdm.py` CLI options are comma-separated lists. They form a grid of `model × context_size × num_estimators`, and each config runs on the given folds.
@@ -33,6 +35,8 @@ There are no tests, linter or build step.
 
 - **Data:** the Modal volume `kaggle` is mounted at `/data`. Competition files (`train.csv`, `test.csv`) are in `/data/playground-series-s6e10/`. The Modal volume `hf-cache` is mounted at `/hf-cache` as `HF_HOME` for model weights. Call `hf_cache.commit()` after downloading weights so they persist.
 - **OOF predictions** for ensembling go in `/data/oof-s6e10/<model>_<variant>.npy`, in `train.csv` row order. `eval.py` (`lightgbm_te`) and `eval_catboost.py` (`catboost_<variant>`) write them; call `volume.commit()` after writing. `blend.py` scores single models, pairwise weights and greedy ensemble selection on rank-normalized OOFs.
+- **Test predictions:** `eval.py` and `eval_catboost.py` also average their 5 fold models' predictions on `test.csv` into `/data/test-preds-s6e10/<name>.npy` (same name as the OOF file, `test.csv` row order). `blend.py --submit-weights` rank-blends those with the given weights, prints the same blend's OOF AUC, checks ids against `sample_submission.csv`, and writes `/data/submissions-s6e10/<weights>_<timestamp>.csv`.
+- **Test features** must match the CV features: count encodings use train-derived counts (unseen → 0), and the `Flight Distance` target encoding for test is fitted on each fold's training rows, like the validation rows. Joins that must keep row order pass `maintain_order="left"`.
 - **Modal resources:** set `cpu=`, `gpu=` and `timeout=` on `@app.function` as needed, but never `memory=`, since Modal bursts memory when required.
 - **Eval script pattern** (`eval.py`, `eval_catboost.py`, `eval_sdm.py`):
   - `train_fold` is a Modal function that handles one fold.

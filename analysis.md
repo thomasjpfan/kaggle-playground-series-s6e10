@@ -140,9 +140,28 @@ The best variant is now built into `eval.py`, which scores 0.96025 OOF.
 - **Personal travel:** only wifi (r = 0.24), online booking (0.22) and online boarding (0.16) matter. The comfort ratings have near-zero correlation in this segment. Wifi alone splits it: ratings of 1–3 are about 4% satisfied, 4 is 24%, and 0 or 5 is 79–91%.
 - **`Customer Type` × `Age`:** loyal 41–60 year-olds are 62% satisfied. Disloyal customers are 14–28% satisfied in every age band.
 
+## Models, tuning and blending
+
+The competition uses only its own data; the original dataset is not used. Every score is OOF AUC on the shared 5 folds.
+
+| Model | OOF AUC |
+|---|---|
+| LightGBM, raw features | 0.95883 |
+| LightGBM + count and `Flight Distance` target encoding | 0.96023 |
+| **LightGBM, tuned** (`eval.py`) | **0.96053** |
+| CatBoost `native` (4 string columns as categoricals) | 0.95838 |
+| CatBoost `allcat` (also ratings, `Age` and `Flight Distance` as categoricals) | 0.96062 |
+| **CatBoost `allcat`, tuned** (`eval_catboost.py`) | **0.96075** |
+| SDM `tabiclv2`, 50k context | 0.95749 |
+| SDM `kumo-tabular`, 50k / 200k context | 0.95807 / 0.95895 |
+| **Rank blend: 0.6 CatBoost + 0.4 LightGBM (tuned)** | **≈ 0.9610** |
+
+- **CatBoost needs exact values as categoricals.** `allcat` beats `native` by +0.0022. Tuning (`tune.py`, 60 trials on fold 0) settled on `depth=7`, `max_ctr_complexity=4`, `one_hot_max_size=2` and light L2. `max_ctr_complexity=1` was always worst, so combinations of categoricals carry signal.
+- **LightGBM needs fine bins.** All of the top 10 tuned configs use `max_bin=4095`; the default 255 bins merge the exact `Flight Distance` values. Stronger L2 (about 15), `feature_fraction` about 0.5, and low `cat_smooth` also helped.
+- **Noise floor.** GPU CatBoost varies by about ±0.0002 between identical runs, which is as large as the gaps between the top tuning configs.
+- **Blending.** The two trees correlate at 0.97 in rank. The SDM models are more different (0.94) but too weak to earn weight, even at a 200k context. An equal average of all models scores below CatBoost alone.
+
 ### Next ideas
 
-The competition uses only its own data; the original dataset is not used.
-
-1. **CatBoost:** treat all ratings and numeric columns as categoricals; its ordered target encoding fits the finding above.
-2. **Ensembling:** rank-average models that differ genuinely, such as CatBoost, the SDM models and LightGBM. Rank-averaging LightGBM feature-set variants gave almost nothing (0.96023).
+1. **Check CV against the leaderboard** with the first submission (`blend.py --submit-weights`).
+2. **If they agree:** try a lower learning rate (0.02) for both trees, or a full-fold SDM context for diversity.

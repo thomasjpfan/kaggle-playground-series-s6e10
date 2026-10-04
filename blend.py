@@ -6,6 +6,8 @@ volume = modal.Volume.from_name("kaggle")
 VOLUME_PATH = "/data"
 DATA_DIR = f"{VOLUME_PATH}/playground-series-s6e10"
 OOF_DIR = f"{VOLUME_PATH}/oof-s6e10"
+TEST_PRED_DIR = f"{VOLUME_PATH}/test-preds-s6e10"
+SUBMISSION_DIR = f"{VOLUME_PATH}/submissions-s6e10"
 
 image = modal.Image.debian_slim().uv_pip_install("polars", "numpy", "scipy", "scikit-learn")
 
@@ -69,6 +71,53 @@ def blend(names: list[str] | None = None):
     # Note: the weights are fitted on the same OOF used to score them, so this is slightly optimistic.
 
 
+@app.function(image=image, volumes={VOLUME_PATH: volume}, timeout=3600)
+def submit(weights: dict[str, float]):
+    """Weighted rank blend of the saved test predictions, written as a submission CSV."""
+    import os
+    import time
+
+    import numpy as np
+    import polars as pl
+    from scipy.stats import rankdata
+    from sklearn.metrics import roc_auc_score
+
+    def rank_blend(arrays):
+        total = sum(weights.values())
+        return sum(w * rankdata(arrays[k]) / len(arrays[k]) for k, w in weights.items()) / total
+
+    y = pl.read_csv(f"{DATA_DIR}/train.csv", columns=[TARGET])[TARGET].cast(pl.Int8).to_numpy()
+    oofs = {k: np.load(f"{OOF_DIR}/{k}.npy") for k in weights}
+    print(f"OOF auc of this blend: {roc_auc_score(y, rank_blend(oofs)):.6f}")
+
+    preds = {k: np.load(f"{TEST_PRED_DIR}/{k}.npy") for k in weights}
+    for k, p in preds.items():
+        print(f"{k:25s} test mean={p.mean():.4f}")
+    keys = list(preds)
+    if len(keys) > 1:
+        corr = np.corrcoef([rankdata(preds[k]) for k in keys])
+        print("test rank correlation:", {f"{a}~{b}": round(corr[i, j], 4)
+                                         for i, a in enumerate(keys) for j, b in enumerate(keys) if i < j})
+
+    ids = pl.read_csv(f"{DATA_DIR}/test.csv", columns=["id"])["id"]
+    sample = pl.read_csv(f"{DATA_DIR}/sample_submission.csv")
+    sub = pl.DataFrame({"id": ids, TARGET: rank_blend(preds)})
+    assert sub.height == sample.height and (sub["id"] == sample["id"]).all(), "ids do not match sample_submission.csv"
+
+    os.makedirs(SUBMISSION_DIR, exist_ok=True)
+    name = "_".join(f"{k}{w:g}" for k, w in weights.items()) + time.strftime("_%Y%m%d-%H%M%S")
+    path = f"{SUBMISSION_DIR}/{name}.csv"
+    sub.write_csv(path)
+    volume.commit()
+    print(f"wrote {sub.height} rows to {path}")
+    return path
+
+
 @app.local_entrypoint()
-def main(names: str = ""):
-    blend.remote(names.split(",") if names else None)
+def main(names: str = "", submit_weights: str = ""):
+    """--submit-weights "catboost_allcat:0.6,lightgbm_te:0.4" writes a submission instead of analyzing."""
+    if submit_weights:
+        weights = {k: float(w) for k, w in (item.split(":") for item in submit_weights.split(","))}
+        submit.remote(weights)
+    else:
+        blend.remote(names.split(",") if names else None)

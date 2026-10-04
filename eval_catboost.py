@@ -6,6 +6,7 @@ volume = modal.Volume.from_name("kaggle")
 VOLUME_PATH = "/data"
 DATA_DIR = f"{VOLUME_PATH}/playground-series-s6e10"
 OOF_DIR = f"{VOLUME_PATH}/oof-s6e10"
+TEST_PRED_DIR = f"{VOLUME_PATH}/test-preds-s6e10"
 
 image = modal.Image.debian_slim().uv_pip_install("polars", "pandas", "pyarrow", "catboost", "scikit-learn")
 
@@ -43,18 +44,25 @@ PARAMS = {
 }
 
 
-def load_train(variant: str):
+def load_data(variant: str):
     import polars as pl
 
     train = pl.read_csv(f"{DATA_DIR}/train.csv")
+    test = pl.read_csv(f"{DATA_DIR}/test.csv")
     ratings = [c for c in train.columns if train[c].dtype == pl.Int64 and c not in ("id", *EXTRA_CAT) and train[c].max() <= 5]
     cat_features = list(CATEGORICAL)
     if variant == "allcat":
         copies = ratings + EXTRA_CAT
-        train = train.with_columns(pl.col(c).cast(pl.Utf8).alias(f"{c}_cat") for c in copies)
+        train, test = (df.with_columns(pl.col(c).cast(pl.Utf8).alias(f"{c}_cat") for c in copies) for df in (train, test))
         cat_features += [f"{c}_cat" for c in copies]
     y = train[TARGET].cast(pl.Int8).to_numpy()
     X = train.drop("id", TARGET).to_pandas()
+    X_test = test.drop("id").select(X.columns.tolist()).to_pandas()
+    return X, y, cat_features, X_test
+
+
+def load_train(variant: str):
+    X, y, cat_features, _ = load_data(variant)
     return X, y, cat_features
 
 
@@ -64,7 +72,7 @@ def train_fold(variant: str, fold: int):
     from sklearn.metrics import roc_auc_score
     from sklearn.model_selection import StratifiedKFold
 
-    X, y, cat_features = load_train(variant)
+    X, y, cat_features, X_test = load_data(variant)
     skf = StratifiedKFold(n_splits=N_FOLDS, shuffle=True, random_state=SEED)
     train_idx, valid_idx = list(skf.split(X, y))[fold]
 
@@ -74,6 +82,7 @@ def train_fold(variant: str, fold: int):
     model.fit(dtrain, eval_set=dvalid, use_best_model=True)
 
     preds = model.predict_proba(dvalid)[:, 1]
+    test_preds = model.predict_proba(Pool(X_test, cat_features=cat_features))[:, 1]
     auc = roc_auc_score(y[valid_idx], preds)
     print(f"{variant} fold {fold}: auc={auc:.6f} best_iteration={model.get_best_iteration()}")
     return {
@@ -83,6 +92,7 @@ def train_fold(variant: str, fold: int):
         "best_iteration": model.get_best_iteration(),
         "valid_idx": valid_idx,
         "preds": preds,
+        "test_preds": test_preds,
         "importance": dict(zip(X.columns, model.get_feature_importance().tolist())),
     }
 
@@ -99,6 +109,7 @@ def cross_validate(variants: list[str]):
     results = list(train_fold.starmap([(v, f) for v in variants for f in range(N_FOLDS)]))
 
     os.makedirs(OOF_DIR, exist_ok=True)
+    os.makedirs(TEST_PRED_DIR, exist_ok=True)
     summary = []
     for v in variants:
         rs = sorted((r for r in results if r["variant"] == v), key=lambda r: r["fold"])
@@ -110,6 +121,8 @@ def cross_validate(variants: list[str]):
                 importance[k] = importance.get(k, 0.0) + val / N_FOLDS
         # Saved for ensembling; row order matches train.csv.
         np.save(f"{OOF_DIR}/catboost_{v}.npy", oof)
+        # Mean of the fold models' test predictions; row order matches test.csv.
+        np.save(f"{TEST_PRED_DIR}/catboost_{v}.npy", np.mean([r["test_preds"] for r in rs], axis=0))
         summary.append({
             "variant": v,
             "folds": [{"fold": r["fold"], "auc": float(r["auc"]), "best_iteration": int(r["best_iteration"])} for r in rs],
