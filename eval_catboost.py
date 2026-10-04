@@ -20,11 +20,19 @@ SEED = 42  # Same folds as eval.py.
 VARIANTS = ["native", "allcat"]
 EXTRA_CAT = ["Age", "Flight Distance"]
 
+# Tuned on "allcat" with tune.py (catboost_tuned0). max_ctr_complexity=4 lets CatBoost
+# combine up to 4 categoricals; one_hot_max_size=2 target-encodes the ratings instead of one-hot.
 PARAMS = {
     "loss_function": "Logloss",
     "eval_metric": "AUC",
     "learning_rate": 0.05,
-    "depth": 8,
+    "depth": 7,
+    "l2_leaf_reg": 1.107,
+    "random_strength": 3.133,
+    "bagging_temperature": 0.108,
+    "border_count": 128,
+    "max_ctr_complexity": 4,
+    "one_hot_max_size": 2,
     "iterations": 10000,
     "od_type": "Iter",
     "od_wait": 200,
